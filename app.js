@@ -39,20 +39,32 @@ const CONFIG = {
   maxClawX: 540,
   maxClawY: 580,
   speedX: 3.5,
-  speedY: 3.0,
+  speedY: 2.2,                 // 上昇速度を少し遅くして緊張感UP
   grabDuration: 800,           // 爪が閉じるアニメーション時間 (ms)
   releaseDuration: 1500,
   clawArmLength: 65,           // 爪の腕の長さ (px)
   clawTipLength: 28,           // 爪の先端フック長さ (px)
   clawOpenAngle: 0.85,         // 爪が開いた時の角度 (rad) ≈49°
-  clawCloseAngle: 0.0,         // 爪が閉じた時の角度 (rad) 完全に閉じる
-  grabSearchRadius: 70,        // 掴み判定の探索半径 (px)
+  clawCloseAngle: 0.08,        // 爪が閉じても少し隙間が残る（リアル感）
+  grabSearchRadius: 55,        // 掴み判定の探索半径を小さく (px)
   prizeImages: ['1.png', '2.png', '3.png'],
   prizeNames: {
     '1.png': '博多水無月抹茶',
     '2.png': '博多水無月小豆',
     '3.png': '博多水無月甘夏'
-  }
+  },
+
+  // === 握力・落下バランス設定 ===
+  grabStiffness: 0.02,         // 掴みの硬さ (1.0=完全固定, 0.02=ゆるゆる)
+  grabDamping: 0.01,           // 掴みの減衰（低い=揺れやすい）
+  grabLength: 5,               // Constraintの遊び（少しずれる）
+  slipChancePerFrame: 0.012,   // 毎フレームの滑り落ち確率 (1.2%)
+  slipChanceHeavy: 0.025,      // 重い景品の滑り落ち確率 (2.5%)
+  slipChanceLight: 0.005,      // 軽い景品の滑り落ち確率 (0.5%)
+  swayAmplitude: 1.8,          // 上昇中の横揺れ幅 (px)
+  swayFrequency: 0.08,         // 横揺れの速さ
+  weakenStiffnessRate: 0.0003, // 上昇中にstiffnessが減衰する速度
+  minStiffness: 0.005,         // stiffnessの下限
 };
 
 // グローバルゲーム変数
@@ -65,6 +77,8 @@ let grabbedConstraints = [];
 let grabbedBodies = [];
 let isAudioInitialized = false;
 let audioCtx = null;
+let swayTick = 0;                // 上昇中の揺れカウンター
+let hasSlipped = false;          // 今回のプレイで既にスリップしたか
 
 // 爪のビジュアル状態
 let clawAngle = CONFIG.clawOpenAngle;       // 現在の爪の開き角度
@@ -363,26 +377,34 @@ function attachNearbyPrizes() {
   }
 
   if (closestPrize) {
-    // 景品をclawHeadにConstraintで拘束
+    // 景品をclawHeadにConstraintで拘束（ゆるい握り）
     const offsetX = closestPrize.position.x - headPos.x;
     const offsetY = closestPrize.position.y - headPos.y;
+
+    // 景品の重さカテゴリに基づくstiffness調整
+    const weightCategory = closestPrize.plugin.weightCategory || 'medium';
+    let stiffness = CONFIG.grabStiffness;
+    if (weightCategory === 'heavy') stiffness *= 0.6;   // 重い→さらにゆるい
+    if (weightCategory === 'light') stiffness *= 1.8;   // 軽い→少し掴みやすい
 
     const grabConstraint = Constraint.create({
       bodyA: clawHead,
       pointA: { x: offsetX, y: offsetY },
       bodyB: closestPrize,
       pointB: { x: 0, y: 0 },
-      stiffness: 1.0,    // 完全に固定
-      damping: 0.3,
-      length: 0,
+      stiffness: stiffness,
+      damping: CONFIG.grabDamping,
+      length: CONFIG.grabLength,
       render: { visible: false }
     });
 
     Composite.add(engine.world, grabConstraint);
     grabbedConstraints.push(grabConstraint);
     grabbedBodies.push(closestPrize);
+    hasSlipped = false;
+    swayTick = 0;
 
-    console.log('[Grab] Prize attached to claw!');
+    console.log(`[Grab] Prize attached! Weight: ${weightCategory}, Stiffness: ${stiffness.toFixed(4)}`);
   } else {
     console.log('[Grab] No prize found within grab radius.');
   }
@@ -438,6 +460,48 @@ function updateClawPhysics() {
 
     case STATES.ASCENDING:
       currentClawPos.y -= CONFIG.speedY;
+
+      // === 上昇中の揺れ演出 ===
+      if (grabbedBodies.length > 0) {
+        swayTick++;
+        const sway = Math.sin(swayTick * CONFIG.swayFrequency) * CONFIG.swayAmplitude;
+        // 景品に横方向の力を加えて揺らす
+        for (const body of grabbedBodies) {
+          Body.applyForce(body, body.position, { x: sway * 0.0001, y: 0 });
+        }
+
+        // === 上昇中にstiffnessが弱まる（アームの力が抜けていく演出）===
+        for (const c of grabbedConstraints) {
+          c.stiffness = Math.max(c.stiffness - CONFIG.weakenStiffnessRate, CONFIG.minStiffness);
+        }
+
+        // === 確率的スリップ落下 ===
+        if (!hasSlipped) {
+          for (let i = grabbedBodies.length - 1; i >= 0; i--) {
+            const body = grabbedBodies[i];
+            const weightCategory = body.plugin.weightCategory || 'medium';
+            let slipChance = CONFIG.slipChancePerFrame;
+            if (weightCategory === 'heavy') slipChance = CONFIG.slipChanceHeavy;
+            if (weightCategory === 'light') slipChance = CONFIG.slipChanceLight;
+
+            // 高い位置ほど落ちやすい（上昇するほどリスクUP）
+            const heightRatio = 1 - (currentClawPos.y - CONFIG.initialClawY) / (CONFIG.maxClawY - CONFIG.initialClawY);
+            slipChance *= (0.5 + heightRatio * 1.5);
+
+            if (Math.random() < slipChance) {
+              // スリップ！景品を落とす
+              console.log(`[Slip!] Prize dropped! Weight: ${weightCategory}`);
+              Composite.remove(engine.world, grabbedConstraints[i]);
+              grabbedConstraints.splice(i, 1);
+              grabbedBodies.splice(i, 1);
+              hasSlipped = true;
+              playSynthSound('release');
+              break;
+            }
+          }
+        }
+      }
+
       if (currentClawPos.y <= CONFIG.initialClawY) {
         currentClawPos.y = CONFIG.initialClawY;
         transitionTo(STATES.RETURNING);
@@ -447,6 +511,34 @@ function updateClawPhysics() {
 
     case STATES.RETURNING:
       currentClawPos.x -= CONFIG.speedX;
+
+      // === 帰還中も揺れ＋落下判定あり ===
+      if (grabbedBodies.length > 0 && !hasSlipped) {
+        swayTick++;
+        const sway2 = Math.sin(swayTick * CONFIG.swayFrequency * 1.3) * CONFIG.swayAmplitude * 0.8;
+        for (const body of grabbedBodies) {
+          Body.applyForce(body, body.position, { x: sway2 * 0.00008, y: 0 });
+        }
+
+        // 帰還中は落下確率が半分（投入口に近い=セーフ寄り）
+        for (let i = grabbedBodies.length - 1; i >= 0; i--) {
+          const body = grabbedBodies[i];
+          const weightCategory = body.plugin.weightCategory || 'medium';
+          let slipChance = CONFIG.slipChancePerFrame * 0.5;
+          if (weightCategory === 'heavy') slipChance = CONFIG.slipChanceHeavy * 0.5;
+
+          if (Math.random() < slipChance) {
+            console.log(`[Slip Return!] Prize dropped during return!`);
+            Composite.remove(engine.world, grabbedConstraints[i]);
+            grabbedConstraints.splice(i, 1);
+            grabbedBodies.splice(i, 1);
+            hasSlipped = true;
+            playSynthSound('release');
+            break;
+          }
+        }
+      }
+
       if (currentClawPos.x <= 70) {
         currentClawPos.x = 70;
         performRelease();
@@ -638,19 +730,41 @@ function spawnPrizes(count) {
   const startX = 170;
   const endX = CONFIG.canvasWidth - 50;
 
+  // 景品の重さカテゴリ定義（リアルクレーンゲーム感）
+  const weightCategories = [
+    { name: 'light',  density: 0.00015, chance: 0.25 },  // 軽い（取りやすい）
+    { name: 'medium', density: 0.0004,  chance: 0.50 },  // 普通
+    { name: 'heavy',  density: 0.0008,  chance: 0.25 },  // 重い（取りにくい）
+  ];
+
   for (let i = 0; i < count; i++) {
     const rx = startX + Math.random() * (endX - startX);
     const ry = CONFIG.canvasHeight - 150 - (i * 30);
     const imgFile = CONFIG.prizeImages[Math.floor(Math.random() * CONFIG.prizeImages.length)];
 
+    // 重さカテゴリをランダムに選択
+    const roll = Math.random();
+    let cumulative = 0;
+    let selectedWeight = weightCategories[1]; // デフォルトmedium
+    for (const cat of weightCategories) {
+      cumulative += cat.chance;
+      if (roll < cumulative) {
+        selectedWeight = cat;
+        break;
+      }
+    }
+
     const radius = 36;
     const prize = Bodies.circle(rx, ry, radius, {
-      restitution: 0.1,
-      friction: 0.95,
-      density: 0.0003,
-      frictionAir: 0.02,
+      restitution: 0.15,
+      friction: 0.6,           // 摩擦を少し下げて滑りやすく
+      density: selectedWeight.density,
+      frictionAir: 0.015,
       label: 'prize',
-      plugin: { imageFile: imgFile },
+      plugin: {
+        imageFile: imgFile,
+        weightCategory: selectedWeight.name
+      },
       render: {
         sprite: {
           texture: imgFile,
