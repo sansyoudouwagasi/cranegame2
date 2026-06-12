@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Neon Claw - 2Dクレーンゲーム</title>
+  <meta name="description" content="物理演算エンジンを使用したリアルなスマホ向け2Dクレーンゲーム。景品を集めてコレクションを完成させよう！">
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+  
+  <!-- CSS Stylesheet -->
+  <link rel="stylesheet" href="style.css?v=11">
+  
+  <!-- Matter.js 物理エンジン CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js" defer></script>
+  <!-- ゲームスクリプト -->
+  <script src="app.js?v=12" defer></script>
+</head>
+<body>
+  <div class="app-container">
+    <header class="game-header">
+      <h1 class="game-title">NEON CLAW</h1>
+      <div class="status-panel">
+        <div class="status-item credit-display">
+          <span class="label">CREDIT</span>
+          <span id="credit-count" class="value">3</span>
+        </div>
+        <div class="status-item score-display">
+          <span class="label">GETS</span>
+          <span id="get-count" class="value">0</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="game-main">
+      <!-- クレーンゲーム筐体（CanvasがJSによってここに挿入されます） -->
+      <div class="cabinet-wrapper">
+        <div id="game-canvas-container" class="canvas-container">
+          <!-- Canvas Loading State -->
+          <div class="loading-overlay" id="loading-overlay">
+            <div class="spinner"></div>
+            <p>Loading Game Engine...</p>
+          </div>
+          <!-- 景品投入口の視覚的ガイド -->
+          <div class="drop-chute-visual"></div>
+        </div>
+      </div>
+
+      <!-- 操作パネル -->
+      <div class="control-panel">
+        <div class="control-top">
+          <button id="btn-insert-coin" class="btn btn-coin">
+            <svg class="icon" viewBox="0 0 24 24" width="24" height="24">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+              <path d="M12 6v12M9 9h6M9 15h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <span>COIN (無料)</span>
+          </button>
+          
+          <button id="btn-refill" class="btn btn-secondary">
+            <svg class="icon" viewBox="0 0 24 24" width="24" height="24">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>景品補充</span>
+          </button>
+        </div>
+
+        <div class="control-actions">
+          <div class="action-instructions" id="action-instructions">
+            コインを入れてスタート！
+          </div>
+          <div class="action-buttons">
+            <!-- 1ボタン：右移動 -->
+            <button id="btn-move-right" class="btn-action btn-move" disabled>
+              <div class="btn-label">1</div>
+              <div class="btn-text">みぎ</div>
+              <!-- 右向き矢印 -->
+              <svg viewBox="0 0 24 24" width="24" height="24" class="btn-icon">
+                <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              </svg>
+            </button>
+            
+            <!-- 2ボタン：下降 -->
+            <button id="btn-move-down" class="btn-action btn-down" disabled>
+              <div class="btn-label">2</div>
+              <div class="btn-text">キャッチ</div>
+              <!-- 下向き矢印 -->
+              <svg viewBox="0 0 24 24" width="24" height="24" class="btn-icon">
+                <path d="M12 5v14M5 12l7 7 7-7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+
+
+    <!-- 景品獲得ポップアップ -->
+    <div class="modal-overlay" id="prize-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>GET PRIZE!</h2>
+        </div>
+        <div class="modal-body">
+          <div class="prize-display-glow">
+            <img id="modal-prize-img" src="1.png" alt="獲得した景品" class="modal-prize-img">
+          </div>
+          <p class="congrats-text">おめでとうございます！</p>
+          <p class="prize-get-name" id="modal-prize-name">あおいぬいぐるみ</p>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-close-modal" class="btn btn-primary">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
